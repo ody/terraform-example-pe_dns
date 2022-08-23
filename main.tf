@@ -1,6 +1,7 @@
 variable "project"      { type = string }
 variable "region"       { type = string }
 variable "loadbalancer" { type = string }
+variable "zone"         { type = string }
 variable "instances"    { type = set(string) }
 
 # Terraform setup stuff, required providers, where they are sourced from, and
@@ -24,8 +25,22 @@ data "google_compute_zones" "available" {
   status = "UP"
 }
 
+data "google_compute_instance" "nodes" {
+  for_each = local.instance_zone_map
+  name = each.value["name"]
+  zone = each.value["zone"]
+}
+
+data "google_compute_forwarding_rule" "loadbalancer" {
+  name = var.loadbalancer
+}
+
+data "google_dns_managed_zone" "dns_zone" {
+  name = var.zone
+}
+
 locals {
-  domain       = "cody.automationdemos.com."
+  domain       = data.google_dns_managed_zone.dns_zone.dns_name
   zones        = data.google_compute_zones.available.names
   permutations = flatten([ for i in var.instances : 
     [for z in local.zones : { "${i}/${z}" = { "name" = i, "zone" = z }}]
@@ -40,23 +55,13 @@ locals {
   collected_lb = "${data.google_compute_forwarding_rule.loadbalancer.service_name}."
 }
 
-data "google_compute_instance" "nodes" {
-  for_each = local.instance_zone_map
-  name = each.value["name"]
-  zone = each.value["zone"]
-}
-
-data "google_compute_forwarding_rule" "loadbalancer" {
-  name = var.loadbalancer
-}
-
 resource "google_dns_record_set" "node" {
   for_each = local.collected_instances
   name = "${each.key}.${local.domain}"
   type = "A"
   ttl  = 300
 
-  managed_zone = "automationdemos"
+  managed_zone = var.zone
 
   rrdatas = [each.value]
 }
@@ -66,7 +71,7 @@ resource "google_dns_record_set" "loadbalancer" {
   type = "CNAME"
   ttl  = 300
 
-  managed_zone = "automationdemos"
+  managed_zone = var.zone
 
   rrdatas = [local.collected_lb]
 }
